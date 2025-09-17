@@ -1,0 +1,243 @@
+openapi: 3.0.3
+info:
+  title: Workflow App API (Milestone 1)
+  version: 0.1.0
+servers:
+  - url: http://localhost:8000
+paths:
+  /workflows:
+    post:
+      summary: Create a workflow
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWorkflowRequest'
+      responses:
+        '200':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateWorkflowResponse'
+  /workflows/{id}:
+    get:
+      summary: Get workflow by id
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Workflow detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowDetailResponse'
+        '404':
+          description: Not found
+  /workflows/{id}/nodes:
+    post:
+      summary: Add node to a workflow
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddNodeRequest'
+      responses:
+        '200':
+          description: Node added
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  node_id:
+                    type: string
+  /workflows/{id}/run:
+    post:
+      summary: Run a workflow (synchronous for this milestone)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Final output
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  final_output:
+                    type: string
+  /workflows/{id}/runs:
+    get:
+      summary: List runs for a workflow
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Runs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  runs:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Run'
+  /runs/{run_id}:
+    get:
+      summary: Get run detail
+      parameters:
+        - in: path
+          name: run_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Run detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunDetail'
+        '404':
+          description: Not found
+components:
+  schemas:
+    CreateWorkflowRequest:
+      type: object
+      properties:
+        name:
+          type: string
+      required: [name]
+    CreateWorkflowResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+      required: [id, name]
+    Node:
+      type: object
+      properties:
+        id:
+          type: string
+        node_type:
+          $ref: '#/components/schemas/NodeType'
+        config:
+          type: object
+          additionalProperties: true
+      required: [id, node_type, config]
+    WorkflowDetailResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Node'
+      required: [id, name, nodes]
+    AddNodeRequest:
+      type: object
+      properties:
+        node_type:
+          $ref: '#/components/schemas/NodeType'
+        config:
+          type: object
+          additionalProperties: true
+      required: [node_type, config]
+    NodeType:
+      type: string
+      enum: [extract_text, generative_ai, formatter]
+    Run:
+      type: object
+      properties:
+        id:
+          type: string
+        workflow_id:
+          type: string
+        status:
+          type: string
+          enum: [Pending, Running, Succeeded, Failed]
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        error_message:
+          type: string
+          nullable: true
+        final_output:
+          type: string
+          nullable: true
+      required: [id, workflow_id, status, started_at]
+    RunNode:
+      type: object
+      properties:
+        id:
+          type: string
+        run_id:
+          type: string
+        node_id:
+          type: string
+          nullable: true
+        node_type:
+          $ref: '#/components/schemas/NodeType'
+        status:
+          type: string
+          enum: [Pending, Running, Succeeded, Failed]
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        input_text:
+          type: string
+          nullable: true
+        output_text:
+          type: string
+          nullable: true
+        error_message:
+          type: string
+          nullable: true
+      required: [id, run_id, node_type, status, started_at]
+    RunDetail:
+      type: object
+      properties:
+        run:
+          $ref: '#/components/schemas/Run'
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunNode'
+
