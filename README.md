@@ -138,27 +138,56 @@ PYTHONPATH=. DATABASE_URL=postgresql://postgres:password@localhost:5432/workflow
 ```
 
 ## API Reference
-- POST `/workflows` → `{ id, name }`
-- GET `/workflows/{id}` → `{ id, name, nodes[] }`
-- POST `/workflows/{id}/nodes` → `{ message, node_id }`
-- POST `/workflows/{id}/run` → `{ final_output }`
-- GET `/workflows/{id}/runs` → `{ runs: [{ id, workflow_id, status, started_at, finished_at?, final_output? }] }`
-- GET `/runs/{run_id}` → `{ run: { id, workflow_id, status, ... }, steps: [{ id, node_type, status, input_text, output_text, ... }] }`
 
-## Minimal Endpoints (Per Constitution)
-These describe the minimal target API as defined by the constitution (asynchronous runs, file uploads). They may extend beyond the current in-memory demo.
+### Core Workflow Endpoints
+- **POST** `/workflows` → `{ id, name }`
+- **GET** `/workflows/{id}` → `{ id, name, nodes[] }`
+- **POST** `/workflows/{id}/nodes` → `{ message, node_id }`
+- **GET** `/workflows/{id}/runs` → `{ runs: [Job] }`
 
-- POST `/workflows` → `{ id, name }`
-- GET `/workflows/{id}` → `{ id, name, nodes: Node[] }`
-- POST `/workflows/{id}/nodes` → `{ message, node_id }`
-- POST `/files` (multipart/form-data; file: pdf) → `{ file_id }`
-- POST `/workflows/{id}/run` → `{ job_id }`
-- GET `/jobs/{job_id}` → `{ status: "Pending"|"Running"|"Succeeded"|"Failed", result?: { final_output: string }, error?: string }`
+### Async Execution (NEW)
+- **POST** `/workflows/{id}/run` → `{ job_id, message }` *(async execution)*
+- **GET** `/jobs/{job_id}` → `{ id, workflow_id, status, started_at, finished_at?, final_output?, error_message? }`
 
-Notes:
-- PDF only, size-limited (e.g., 10MB), MIME validated.
-- CORS enabled for local dev (`http://localhost:3000`).
-- Secrets (e.g., LLM_API_KEY) are provided via environment variables.
+### File Operations (NEW)
+- **POST** `/files` (multipart/form-data) → `{ file_id, filename, message }`
+
+### Supported Node Types
+1. **extract_text**: Extract text from uploaded PDF files
+   - Config: `{ file_id: string }`
+2. **generative_ai**: Process text using OpenAI models
+   - Config: `{ model: string, prompt: string, temperature?: number, max_tokens?: number, top_p?: number }`
+   - Supported models: `gpt-4.1-mini`, `gpt-4o`, `gpt-5`
+3. **formatter**: Apply text transformation rules
+   - Config: `{ rules: string[] }`
+   - Available rules: `lowercase`, `uppercase`, `full_to_half`, `half_to_full`
+
+### Job Status Flow
+```
+Pending → Running → Succeeded/Failed
+```
+
+### Concurrency Limits
+- Max 2 running jobs per workflow
+- Max 20 jobs in queue (FIFO)
+- Returns HTTP 429 when queue is full
+
+### File Upload Constraints
+- **Format**: PDF files only
+- **Size**: Maximum 10MB
+- **Validation**: MIME type and PDF header verification
+- **Security**: No encrypted/password-protected PDFs
+
+### Environment Variables
+Set these environment variables for full functionality:
+```bash
+# Required for LLM functionality
+LLM_API_KEY=your_openai_api_key_here
+LLM_API_BASE=https://api.openai.com/v1  # Optional, defaults to OpenAI
+
+# Database (auto-configured in development)
+DATABASE_URL=postgresql://postgres:password@localhost:5432/workflow_db
+```
 
 ## Minimal Data Model (Per Constitution)
 SQLite (single-file) schema sufficient for persistence and async execution tracking:

@@ -15,3 +15,6 @@ __pycache__/
 # Project-specific
 .serena/
 assignment_files/
+/.env
+/uploads/*
+!/uploads/.gitkeep

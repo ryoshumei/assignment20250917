@@ -42,6 +42,10 @@ def test_get_workflow_runs_contract(client):
         assert run["workflow_id"] == workflow_id
         assert run["status"] in ["Pending", "Running", "Succeeded", "Failed"]
 
+        # For async jobs, we expect job_id field
+        if "job_id" in run:
+            assert isinstance(run["job_id"], str)
+
         # Optional fields
         if "finished_at" in run:
             assert run["finished_at"] is None or isinstance(run["finished_at"], str)

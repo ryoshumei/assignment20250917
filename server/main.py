@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, Request
+from fastapi import FastAPI, HTTPException, Depends, Request, BackgroundTasks, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from datetime import datetime
@@ -6,9 +6,10 @@ from typing import List
 import logging
 import uuid
 import time
+import os
 
 from .database import get_db
-from .db_models import WorkflowDB, NodeDB, RunDB, RunNodeDB
+from .db_models import WorkflowDB, NodeDB, RunDB, RunNodeDB, JobDB, JobStepDB, UploadedFileDB
 from .models import NodeType
 from .schemas import (
     CreateWorkflowRequest,
@@ -19,7 +20,16 @@ from .schemas import (
     RunDetailResponse,
     RunResponse,
     RunNodeResponse,
+    JobAccepted,
+    Job,
+    JobDetailResponse,
+    JobStepResponse,
+    FileUploadResponse,
 )
+from .services.pdf_service import pdf_service
+from .services.llm_service import llm_service
+from .services.formatter_service import formatter_service
+from .services.job_service import job_service
 
 
 # Configure structured logging
@@ -117,6 +127,16 @@ def add_node(wf_id: str, req: AddNodeRequest, db: Session = Depends(get_db)):
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
 
+    # Validate node configuration based on type
+    if req.node_type == NodeType.GENERATIVE_AI:
+        is_valid, error_msg = llm_service.validate_config(req.config)
+        if not is_valid:
+            raise HTTPException(status_code=400, detail=error_msg)
+    elif req.node_type == NodeType.FORMATTER:
+        is_valid, error_msg = formatter_service.validate_config(req.config)
+        if not is_valid:
+            raise HTTPException(status_code=400, detail=error_msg)
+
     # Get the next order index
     max_order = db.query(NodeDB).filter(NodeDB.workflow_id == wf_id).count()
 
@@ -133,9 +153,9 @@ def add_node(wf_id: str, req: AddNodeRequest, db: Session = Depends(get_db)):
     return {"message": "Node added", "node_id": node.id}
 
 
-@app.post("/workflows/{wf_id}/run")
-def run_workflow(wf_id: str, request: Request, db: Session = Depends(get_db)):
-    """Run a workflow (synchronous for this milestone)"""
+@app.post("/workflows/{wf_id}/run", response_model=JobAccepted)
+def run_workflow(wf_id: str, background_tasks: BackgroundTasks, request: Request, db: Session = Depends(get_db)):
+    """Run a workflow asynchronously"""
     request_id = getattr(request.state, 'request_id', 'unknown')
 
     workflow = db.query(WorkflowDB).filter(WorkflowDB.id == wf_id).first()
@@ -146,166 +166,205 @@ def run_workflow(wf_id: str, request: Request, db: Session = Depends(get_db)):
         )
         raise HTTPException(status_code=404, detail="Workflow not found")
 
-    # Create run record
-    run = RunDB(workflow_id=wf_id, status="Running")
-    db.add(run)
-    db.commit()
-    db.refresh(run)
-
-    logger.info(
-        "Workflow execution started",
-        extra={
-            "request_id": request_id,
-            "workflow_id": wf_id,
-            "run_id": run.id,
-            "node_count": len(workflow.nodes)
-        }
-    )
-
+    # Create job record
     try:
-        # Execute workflow nodes in order
-        data = {"text": "Initial text from some doc ..."}
+        job = job_service.create_job(db, wf_id)
 
-        for i, node in enumerate(workflow.nodes):
-            # Create run_node record for this step
-            run_node = RunNodeDB(
-                run_id=run.id,
-                node_id=node.id,
-                node_type=node.node_type,
-                status="Running",
-                input_text=data["text"]
-            )
-            db.add(run_node)
+        # Try to enqueue the job
+        if not job_service.enqueue_job(wf_id, job.id):
+            # Queue is full
+            db.delete(job)
             db.commit()
-            db.refresh(run_node)
-
-            logger.info(
-                "Node execution started",
-                extra={
-                    "request_id": request_id,
-                    "workflow_id": wf_id,
-                    "run_id": run.id,
-                    "run_node_id": run_node.id,
-                    "node_id": node.id,
-                    "node_type": node.node_type,
-                    "node_index": i
-                }
+            raise HTTPException(
+                status_code=429,
+                detail="Job queue is full. Maximum concurrent jobs reached. Please try again later."
             )
 
-            try:
-                # Simulate node execution
-                if node.node_type == NodeType.EXTRACT_TEXT.value:
-                    data["text"] = "[EXTRACTED] " + data["text"]
-                elif node.node_type == NodeType.GENERATIVE_AI.value:
-                    prompt = node.config.get("prompt", "")
-                    data["text"] = f"[GEN_AI with prompt='{prompt}']: " + data["text"]
-                elif node.node_type == NodeType.FORMATTER.value:
-                    data["text"] = data["text"].upper()
-
-                # Update run_node as succeeded
-                run_node.status = "Succeeded"
-                run_node.finished_at = datetime.utcnow()
-                run_node.output_text = data["text"]
-                db.commit()
-
-                logger.info(
-                    "Node execution completed",
-                    extra={
-                        "request_id": request_id,
-                        "workflow_id": wf_id,
-                        "run_id": run.id,
-                        "run_node_id": run_node.id,
-                        "node_id": node.id,
-                        "node_type": node.node_type,
-                        "status": "Succeeded"
-                    }
-                )
-
-            except Exception as e:
-                # Handle node execution failure
-                run_node.status = "Failed"
-                run_node.finished_at = datetime.utcnow()
-                run_node.error_message = str(e)
-                db.commit()
-
-                logger.error(
-                    "Node execution failed",
-                    extra={
-                        "request_id": request_id,
-                        "workflow_id": wf_id,
-                        "run_id": run.id,
-                        "run_node_id": run_node.id,
-                        "node_id": node.id,
-                        "node_type": node.node_type,
-                        "error": str(e)
-                    }
-                )
-                raise
-
-        # Mark run as succeeded
-        run.status = "Succeeded"
-        run.finished_at = datetime.utcnow()
-        run.final_output = data["text"]
-        db.commit()
+        # Add job execution to background tasks
+        background_tasks.add_task(job_service.execute_job, db, job.id)
 
         logger.info(
-            "Workflow execution completed successfully",
+            "Workflow job enqueued",
             extra={
                 "request_id": request_id,
                 "workflow_id": wf_id,
-                "run_id": run.id,
-                "status": "Succeeded",
-                "nodes_executed": len(workflow.nodes)
+                "job_id": job.id
             }
         )
 
-        return {"final_output": data["text"]}
+        return JobAccepted(job_id=job.id)
 
+    except HTTPException:
+        raise
     except Exception as e:
-        # Mark run as failed
-        run.status = "Failed"
-        run.finished_at = datetime.utcnow()
-        run.error_message = str(e)
-        db.commit()
-
         logger.error(
-            "Workflow execution failed",
+            "Error creating job",
             extra={
                 "request_id": request_id,
                 "workflow_id": wf_id,
-                "run_id": run.id,
-                "status": "Failed",
                 "error": str(e)
             }
         )
-
-        raise HTTPException(status_code=500, detail=f"Workflow execution failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to create job")
 
 
 @app.get("/workflows/{wf_id}/runs", response_model=WorkflowRunsResponse)
 def get_workflow_runs(wf_id: str, db: Session = Depends(get_db)):
-    """List runs for a workflow"""
+    """List runs for a workflow (includes both traditional runs and async jobs)"""
     workflow = db.query(WorkflowDB).filter(WorkflowDB.id == wf_id).first()
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
 
+    # Get traditional runs
     runs = db.query(RunDB).filter(RunDB.workflow_id == wf_id).order_by(RunDB.started_at.desc()).all()
 
-    return WorkflowRunsResponse(
-        runs=[RunResponse.from_orm(run) for run in runs]
-    )
+    # Get async jobs (convert to run format for backward compatibility)
+    jobs = db.query(JobDB).filter(JobDB.workflow_id == wf_id).order_by(JobDB.started_at.desc()).all()
+
+    # Convert jobs to run format
+    run_responses = [RunResponse.from_orm(run) for run in runs]
+
+    for job in jobs:
+        # Create a run-like response for jobs
+        job_as_run = RunResponse(
+            id=job.id,
+            workflow_id=job.workflow_id,
+            status=job.status,
+            started_at=job.started_at,
+            finished_at=job.finished_at,
+            error_message=job.error_message,
+            final_output=job.final_output
+        )
+        run_responses.append(job_as_run)
+
+    # Sort all runs by started_at descending
+    run_responses.sort(key=lambda x: x.started_at, reverse=True)
+
+    return WorkflowRunsResponse(runs=run_responses)
 
 
 @app.get("/runs/{run_id}", response_model=RunDetailResponse)
 def get_run_detail(run_id: str, db: Session = Depends(get_db)):
-    """Get run detail with steps"""
+    """Get run detail with steps (supports both traditional runs and async jobs)"""
+    # First try to find a traditional run
     run = db.query(RunDB).filter(RunDB.id == run_id).first()
-    if not run:
-        raise HTTPException(status_code=404, detail="Run not found")
+    if run:
+        run_nodes = db.query(RunNodeDB).filter(RunNodeDB.run_id == run_id).order_by(RunNodeDB.started_at).all()
+        return RunDetailResponse(
+            run=RunResponse.from_orm(run),
+            steps=[RunNodeResponse.from_orm(rn) for rn in run_nodes]
+        )
 
-    run_nodes = db.query(RunNodeDB).filter(RunNodeDB.run_id == run_id).order_by(RunNodeDB.started_at).all()
+    # If not found, try to find an async job
+    job = db.query(JobDB).filter(JobDB.id == run_id).first()
+    if job:
+        job_steps = db.query(JobStepDB).filter(JobStepDB.job_id == run_id).order_by(JobStepDB.started_at).all()
 
-    return RunDetailResponse(
-        run=RunResponse.from_orm(run),
-        steps=[RunNodeResponse.from_orm(rn) for rn in run_nodes]
+        # Convert job to run format for backward compatibility
+        job_as_run = RunResponse(
+            id=job.id,
+            workflow_id=job.workflow_id,
+            status=job.status,
+            started_at=job.started_at,
+            finished_at=job.finished_at,
+            error_message=job.error_message,
+            final_output=job.final_output
+        )
+
+        # Convert job steps to run node format
+        steps_as_run_nodes = []
+        for step in job_steps:
+            step_as_run_node = RunNodeResponse(
+                id=step.id,
+                run_id=step.job_id,
+                node_id=step.node_id,
+                node_type=step.node_type,
+                status=step.status,
+                started_at=step.started_at,
+                finished_at=step.finished_at,
+                input_text=step.input_text,
+                output_text=step.output_text,
+                error_message=step.error_message
+            )
+            steps_as_run_nodes.append(step_as_run_node)
+
+        return RunDetailResponse(
+            run=job_as_run,
+            steps=steps_as_run_nodes
+        )
+
+    raise HTTPException(status_code=404, detail="Run not found")
+
+
+@app.get("/jobs/{job_id}", response_model=Job)
+def get_job(job_id: str, db: Session = Depends(get_db)):
+    """Get job status and details"""
+    job = db.query(JobDB).filter(JobDB.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    return Job.from_orm(job)
+
+
+@app.get("/jobs/{job_id}/details", response_model=JobDetailResponse)
+def get_job_details(job_id: str, db: Session = Depends(get_db)):
+    """Get job details with steps"""
+    job = db.query(JobDB).filter(JobDB.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job_steps = db.query(JobStepDB).filter(JobStepDB.job_id == job_id).order_by(JobStepDB.started_at).all()
+
+    return JobDetailResponse(
+        job=Job.from_orm(job),
+        steps=[JobStepResponse.from_orm(step) for step in job_steps]
     )
+
+
+@app.post("/files", response_model=FileUploadResponse)
+def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """Upload a PDF file"""
+    try:
+        # Validate PDF file
+        is_valid, error_msg = pdf_service.validate_pdf(file)
+        if not is_valid:
+            # Check if it's a file size error for proper HTTP status code
+            if error_msg and error_msg.startswith("FILE_TOO_LARGE:"):
+                raise HTTPException(status_code=413, detail=error_msg.replace("FILE_TOO_LARGE:", ""))
+            else:
+                raise HTTPException(status_code=400, detail=error_msg)
+
+        # Store file
+        file_id, file_path = pdf_service.store_file(file)
+
+        # Save file record to database
+        uploaded_file = UploadedFileDB(
+            id=file_id,
+            filename=file.filename or "uploaded.pdf",
+            mime_type=file.content_type or "application/pdf",
+            size_bytes=len(file.file.read()),
+            file_path=file_path
+        )
+
+        # Reset file pointer and get actual size
+        file.file.seek(0)
+        content = file.file.read()
+        uploaded_file.size_bytes = len(content)
+
+        db.add(uploaded_file)
+        db.commit()
+        db.refresh(uploaded_file)
+
+        logger.info(f"File uploaded successfully: {file_id}")
+
+        return FileUploadResponse(
+            file_id=file_id,
+            filename=uploaded_file.filename,
+            size=uploaded_file.size_bytes
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error uploading file: {str(e)}")
+        raise HTTPException(status_code=500, detail="File upload failed")
