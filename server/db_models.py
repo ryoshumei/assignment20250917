@@ -1,0 +1,98 @@
+from sqlalchemy import Column, String, Integer, DateTime, Text, ForeignKey, Index
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import relationship
+from datetime import datetime
+import uuid
+
+Base = declarative_base()
+
+
+class WorkflowDB(Base):
+    """
+    Database model for workflows
+    """
+    __tablename__ = "workflows"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    name = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    nodes = relationship("NodeDB", back_populates="workflow", order_by="NodeDB.order_index")
+    runs = relationship("RunDB", back_populates="workflow", order_by="RunDB.started_at.desc()")
+
+
+class NodeDB(Base):
+    """
+    Database model for workflow nodes
+    """
+    __tablename__ = "nodes"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    workflow_id = Column(String, ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False)
+    node_type = Column(String, nullable=False)  # Store as TEXT per requirements
+    config = Column(JSONB, nullable=False)  # Store configuration as JSONB
+    order_index = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    workflow = relationship("WorkflowDB", back_populates="nodes")
+    run_nodes = relationship("RunNodeDB", back_populates="node")
+
+    # Index for performance
+    __table_args__ = (
+        Index("idx_nodes_workflow_order", "workflow_id", "order_index"),
+    )
+
+
+class RunDB(Base):
+    """
+    Database model for workflow runs
+    """
+    __tablename__ = "runs"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    workflow_id = Column(String, ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False)
+    status = Column(String, nullable=False, default="Pending")  # Pending, Running, Succeeded, Failed
+    started_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    finished_at = Column(DateTime, nullable=True)
+    error_message = Column(Text, nullable=True)
+    final_output = Column(Text, nullable=True)
+
+    # Relationships
+    workflow = relationship("WorkflowDB", back_populates="runs")
+    run_nodes = relationship("RunNodeDB", back_populates="run", order_by="RunNodeDB.started_at")
+
+    # Index for performance
+    __table_args__ = (
+        Index("idx_runs_workflow_started", "workflow_id", "started_at"),
+    )
+
+
+class RunNodeDB(Base):
+    """
+    Database model for individual node execution steps within a run
+    """
+    __tablename__ = "run_nodes"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    run_id = Column(String, ForeignKey("runs.id", ondelete="CASCADE"), nullable=False)
+    node_id = Column(String, ForeignKey("nodes.id", ondelete="SET NULL"), nullable=True)  # Can be null if node deleted
+    node_type = Column(String, nullable=False)  # Denormalized for auditability
+    status = Column(String, nullable=False, default="Pending")  # Pending, Running, Succeeded, Failed
+    started_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    finished_at = Column(DateTime, nullable=True)
+    input_text = Column(Text, nullable=True)
+    output_text = Column(Text, nullable=True)
+    error_message = Column(Text, nullable=True)
+
+    # Relationships
+    run = relationship("RunDB", back_populates="run_nodes")
+    node = relationship("NodeDB", back_populates="run_nodes")
+
+    # Index for performance
+    __table_args__ = (
+        Index("idx_run_nodes_run_started", "run_id", "started_at"),
+    )
