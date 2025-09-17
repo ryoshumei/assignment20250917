@@ -22,6 +22,7 @@ class WorkflowDB(Base):
     # Relationships
     nodes = relationship("NodeDB", back_populates="workflow", order_by="NodeDB.order_index")
     runs = relationship("RunDB", back_populates="workflow", order_by="RunDB.started_at.desc()")
+    jobs = relationship("JobDB", back_populates="workflow", order_by="JobDB.started_at.desc()")
 
 
 class NodeDB(Base):
@@ -40,6 +41,7 @@ class NodeDB(Base):
     # Relationships
     workflow = relationship("WorkflowDB", back_populates="nodes")
     run_nodes = relationship("RunNodeDB", back_populates="node")
+    job_steps = relationship("JobStepDB", back_populates="node")
 
     # Index for performance
     __table_args__ = (
@@ -95,4 +97,77 @@ class RunNodeDB(Base):
     # Index for performance
     __table_args__ = (
         Index("idx_run_nodes_run_started", "run_id", "started_at"),
+    )
+
+
+class JobDB(Base):
+    """
+    Database model for async workflow jobs
+    """
+    __tablename__ = "jobs"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    workflow_id = Column(String, ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False)
+    status = Column(String, nullable=False, default="Pending")  # Pending, Running, Succeeded, Failed
+    started_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    finished_at = Column(DateTime, nullable=True)
+    error_message = Column(Text, nullable=True)
+    final_output = Column(Text, nullable=True)
+
+    # Relationships
+    workflow = relationship("WorkflowDB", back_populates="jobs")
+    job_steps = relationship("JobStepDB", back_populates="job", order_by="JobStepDB.started_at")
+
+    # Index for performance
+    __table_args__ = (
+        Index("idx_jobs_workflow_started", "workflow_id", "started_at"),
+        Index("idx_jobs_status", "status"),
+    )
+
+
+class JobStepDB(Base):
+    """
+    Database model for individual node execution steps within a job
+    """
+    __tablename__ = "job_steps"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    job_id = Column(String, ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False)
+    node_id = Column(String, ForeignKey("nodes.id", ondelete="SET NULL"), nullable=True)  # Can be null if node deleted
+    node_type = Column(String, nullable=False)  # Denormalized for auditability
+    status = Column(String, nullable=False, default="Pending")  # Pending, Running, Succeeded, Failed
+    started_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    finished_at = Column(DateTime, nullable=True)
+    input_text = Column(Text, nullable=True)
+    output_text = Column(Text, nullable=True)
+    error_message = Column(Text, nullable=True)
+    config_snapshot = Column(JSONB, nullable=True)  # Store node config at execution time
+
+    # Relationships
+    job = relationship("JobDB", back_populates="job_steps")
+    node = relationship("NodeDB", back_populates="job_steps")
+
+    # Index for performance
+    __table_args__ = (
+        Index("idx_job_steps_job_started", "job_id", "started_at"),
+        Index("idx_job_steps_status", "status"),
+    )
+
+
+class UploadedFileDB(Base):
+    """
+    Database model for uploaded files (PDFs)
+    """
+    __tablename__ = "uploaded_files"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    filename = Column(String, nullable=False)
+    mime_type = Column(String, nullable=False)
+    size_bytes = Column(Integer, nullable=False)
+    file_path = Column(String, nullable=False)  # Path where file is stored on disk
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Index for performance
+    __table_args__ = (
+        Index("idx_uploaded_files_created", "created_at"),
     )

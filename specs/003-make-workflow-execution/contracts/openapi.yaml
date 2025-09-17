@@ -1,0 +1,209 @@
+openapi: 3.0.3
+info:
+  title: Workflow API - Async Execution
+  version: 0.1.0
+servers:
+  - url: http://localhost:8000
+paths:
+  /workflows:
+    post:
+      summary: Create workflow
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+              required: [name]
+      responses:
+        '200':
+          description: Workflow created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workflow'
+
+  /workflows/{id}:
+    get:
+      summary: Get workflow by id
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Workflow
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowWithNodes'
+        '404': { description: Not found }
+
+  /workflows/{id}/nodes:
+    post:
+      summary: Add node to workflow
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddNodeRequest'
+      responses:
+        '200':
+          description: Node added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AddNodeResponse'
+        '404': { description: Workflow not found }
+
+  /workflows/{id}/run:
+    post:
+      summary: Trigger async run
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Job accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobAccepted'
+        '404': { description: Workflow not found }
+
+  /jobs/{job_id}:
+    get:
+      summary: Get job status/result
+      parameters:
+        - in: path
+          name: job_id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Job status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '404': { description: Not found }
+
+  /workflows/{id}/runs:
+    get:
+      summary: List runs for workflow
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Run list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  runs:
+                    type: array
+                    items: { $ref: '#/components/schemas/Job' }
+        '404': { description: Workflow not found }
+
+  /files:
+    post:
+      summary: Upload PDF file
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: File uploaded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileUploadResponse'
+
+components:
+  schemas:
+    Workflow:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+      required: [id, name]
+
+    Node:
+      type: object
+      properties:
+        id: { type: string }
+        node_type: { type: string, enum: [extract_text, generative_ai, formatter] }
+        config: { type: object }
+      required: [id, node_type, config]
+
+    WorkflowWithNodes:
+      allOf:
+        - $ref: '#/components/schemas/Workflow'
+        - type: object
+          properties:
+            nodes:
+              type: array
+              items: { $ref: '#/components/schemas/Node' }
+          required: [nodes]
+
+    AddNodeRequest:
+      type: object
+      properties:
+        node_type: { type: string, enum: [extract_text, generative_ai, formatter] }
+        config: { type: object }
+      required: [node_type, config]
+
+    AddNodeResponse:
+      type: object
+      properties:
+        message: { type: string }
+        node_id: { type: string }
+      required: [message, node_id]
+
+    JobAccepted:
+      type: object
+      properties:
+        job_id: { type: string }
+      required: [job_id]
+
+    Job:
+      type: object
+      properties:
+        id: { type: string }
+        workflow_id: { type: string }
+        status: { type: string, enum: [Pending, Running, Succeeded, Failed] }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time, nullable: true }
+        error_message: { type: string, nullable: true }
+        final_output: { type: string, nullable: true }
+      required: [id, workflow_id, status, started_at]
+
+    FileUploadResponse:
+      type: object
+      properties:
+        file_id: { type: string }
+      required: [file_id]
+

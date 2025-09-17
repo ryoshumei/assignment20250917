@@ -17,7 +17,7 @@ def test_add_node_contract(client):
     # Test adding a node
     node_data = {
         "node_type": "generative_ai",
-        "config": {"prompt": "Test prompt", "model": "gpt-3.5"}
+        "config": {"prompt": "Test prompt: {text}", "model": "gpt-4.1-mini"}
     }
 
     response = client.post(f"/workflows/{workflow_id}/nodes", json=node_data)
