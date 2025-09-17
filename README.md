@@ -74,8 +74,7 @@ pip install -r server/requirements.txt
 PYTHONPATH=. DATABASE_URL=postgresql://postgres:password@localhost:5432/workflow_db python3 -m alembic upgrade head
 
 # Start (dev with reload)
-cd server
-PYTHONPATH=.. DATABASE_URL=postgresql://postgres:password@localhost:5432/workflow_db python3 -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
+DATABASE_URL=postgresql://postgres:password@localhost:5432/workflow_db python3 -m uvicorn server.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 #### 3) Frontend (port 3000)
