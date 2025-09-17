@@ -1,50 +1,60 @@
-# [PROJECT_NAME] Constitution
-<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
+# Workflow Web App Constitution
 
 ## Core Principles
 
-### [PRINCIPLE_1_NAME]
-<!-- Example: I. Library-First -->
-[PRINCIPLE_1_DESCRIPTION]
-<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
+### I. Persistence-First (Minimal)
+All workflow, node, job, and file metadata must be persisted in a datastore (no in-memory single source of truth).
+- Datastore: SQLite (single file, zero-ops) for the minimal requirement; swappable later.
+- Minimal migrations are acceptable (handwritten schema or lightweight scripts).
 
-### [PRINCIPLE_2_NAME]
-<!-- Example: II. CLI Interface -->
-[PRINCIPLE_2_DESCRIPTION]
-<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
+### II. Async Job Execution
+Workflow execution is always asynchronous.
+- Run returns a job_id immediately; clients poll job status/results.
+- States: Pending, Running, Succeeded, Failed; include error message on failure.
+- Minimal implementation can use FastAPI background tasks; no external brokers required.
 
-### [PRINCIPLE_3_NAME]
-<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
-[PRINCIPLE_3_DESCRIPTION]
-<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
+### III. Minimal Node Contract
+Provide three built-in node types with serializable configs:
+- NodeType.EXTRACT_TEXT: extract text from uploaded PDF files.
+- NodeType.GENERATIVE_AI: call an LLM with configurable prompt/model and optional params.
+- NodeType.FORMATTER: format text (e.g., upper/lower/normalize) based on rules.
+Nodes behave as pure transformations: input → process(config) → output.
 
-### [PRINCIPLE_4_NAME]
-<!-- Example: IV. Integration Testing -->
-[PRINCIPLE_4_DESCRIPTION]
-<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
+### IV. Minimal REST API
+Keep endpoints simple and debuggable:
+- Workflows: POST /workflows, GET /workflows/{id}, POST /workflows/{id}/nodes
+- Run: POST /workflows/{id}/run → { job_id }
+- Jobs: GET /jobs/{job_id} → { status, result?, error? }
+- Upload: POST /files (PDF only) → { file_id }
+Enable CORS; return clear error messages; limit file size and MIME.
 
-### [PRINCIPLE_5_NAME]
-<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
-[PRINCIPLE_5_DESCRIPTION]
-<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
+### V. Observability & Security (Just Enough)
+“Just Enough” means only the minimal set needed for usability, debugging, and a safety baseline—no over-engineering.
+- Observability: structured logs with request_id/job_id, node type, state, latency; errors include stack traces.
+- Basic metrics (if available): request latency/count, job success/failure, external LLM latency/errors.
+- Security: secrets via env vars; do not log secrets or full prompts; PDF-only uploads with size/MIME checks; least-privilege write access; scoped CORS for dev.
 
-## [SECTION_2_NAME]
-<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
+## Technology & Constraints
+- Backend: FastAPI (Python 3.11+), async-first.
+- Datastore: SQLite (SQLAlchemy or minimal SQL), single-file persistence.
+- LLM: OpenAI-compatible API configurable via env (LLM_API_BASE, LLM_API_KEY).
+- PDF extraction: PyPDF2 (or minimal equivalent); only .pdf accepted.
+- HTTP client: httpx (async).
+- Frontend: React + Vite; minimal UI to create/view workflows, add nodes, upload PDF, run, and poll job result.
+- File storage: local uploads/ directory; max 10MB; PDF MIME only.
+- Minimal schema: tables/collections for workflows, nodes, jobs, files.
 
-[SECTION_2_CONTENT]
-<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
-
-## [SECTION_3_NAME]
-<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
-
-[SECTION_3_CONTENT]
-<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
+## Development Workflow & Quality Gates
+- PR & review: every change via PR; reviewer checks compliance with this constitution.
+- Must-pass checks locally: app starts; can create/get workflow; can add all three node types; can upload PDF; can run and retrieve result via GET /jobs/{id}.
+- Documentation: README must include setup/run, endpoint specs, env vars, known limits, and time spent.
+- Versioning: SemVer; breaking changes require explicit notice and migration guidance.
 
 ## Governance
-<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
+This constitution supersedes other practices. Amendments require:
+- Documented motivation, impact, and migration plan in a PR;
+- Reviewer confirmation that complexity is necessary (YAGNI guardrail);
+- Verified runability and observability of changes.
+Runtime development guidance follows the project README.
 
-[GOVERNANCE_RULES]
-<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
-
-**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
-<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+**Version**: 0.1.0 | **Ratified**: 2025-09-17 | **Last Amended**: 2025-09-17
