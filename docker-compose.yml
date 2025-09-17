@@ -1,0 +1,26 @@
+services:
+  backend:
+    image: python:3.11-slim
+    working_dir: /app
+    command: sh -c "pip install -r server/requirements.txt && uvicorn server.main:app --host 0.0.0.0 --port 8000 --reload"
+    volumes:
+      - ./server:/app/server
+      - ./server/requirements.txt:/app/server/requirements.txt:ro
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
+
+  frontend:
+    image: node:18-alpine
+    working_dir: /app/client
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    volumes:
+      - ./client:/app/client
+    ports:
+      - "3000:3000"
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+      - WATCHPACK_POLLING=true
+
