@@ -23,6 +23,7 @@ class WorkflowDB(Base):
     nodes = relationship("NodeDB", back_populates="workflow", order_by="NodeDB.order_index")
     runs = relationship("RunDB", back_populates="workflow", order_by="RunDB.started_at.desc()")
     jobs = relationship("JobDB", back_populates="workflow", order_by="JobDB.started_at.desc()")
+    edges = relationship("EdgeDB", back_populates="workflow")
 
 
 class NodeDB(Base):
@@ -42,6 +43,8 @@ class NodeDB(Base):
     workflow = relationship("WorkflowDB", back_populates="nodes")
     run_nodes = relationship("RunNodeDB", back_populates="node")
     job_steps = relationship("JobStepDB", back_populates="node")
+    outbound_edges = relationship("EdgeDB", foreign_keys="EdgeDB.from_node_id", back_populates="from_node")
+    inbound_edges = relationship("EdgeDB", foreign_keys="EdgeDB.to_node_id", back_populates="to_node")
 
     # Index for performance
     __table_args__ = (
@@ -170,4 +173,32 @@ class UploadedFileDB(Base):
     # Index for performance
     __table_args__ = (
         Index("idx_uploaded_files_created", "created_at"),
+    )
+
+
+class EdgeDB(Base):
+    """
+    Database model for workflow edges (DAG connections)
+    """
+    __tablename__ = "edges"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    workflow_id = Column(String, ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False)
+    from_node_id = Column(String, ForeignKey("nodes.id", ondelete="CASCADE"), nullable=False)
+    from_port = Column(String, nullable=False, default="output")
+    to_node_id = Column(String, ForeignKey("nodes.id", ondelete="CASCADE"), nullable=False)
+    to_port = Column(String, nullable=False, default="input")
+    condition = Column(String, nullable=True)  # Optional condition for conditional edges
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    workflow = relationship("WorkflowDB", back_populates="edges")
+    from_node = relationship("NodeDB", foreign_keys=[from_node_id], back_populates="outbound_edges")
+    to_node = relationship("NodeDB", foreign_keys=[to_node_id], back_populates="inbound_edges")
+
+    # Index for performance
+    __table_args__ = (
+        Index("idx_edges_workflow", "workflow_id"),
+        Index("idx_edges_from_node", "from_node_id"),
+        Index("idx_edges_to_node", "to_node_id"),
     )

@@ -5,11 +5,13 @@ from sqlalchemy.orm import Session
 import logging
 import uuid
 
-from ..db_models import JobDB, JobStepDB, WorkflowDB, NodeDB, UploadedFileDB
+from ..db_models import JobDB, JobStepDB, WorkflowDB, NodeDB, UploadedFileDB, EdgeDB
 from ..models import NodeType
 from .pdf_service import pdf_service
 from .llm_service import llm_service
 from .formatter_service import formatter_service
+from .graph_service import topo_schedule, get_node_dependencies, aggregate_inputs
+from .agent_service import execute_agent_bounded
 
 logger = logging.getLogger(__name__)
 
@@ -131,58 +133,26 @@ class JobService:
             logger.info(f"Starting execution of job {job_id} for workflow {job.workflow_id}")
 
             try:
-                # Execute workflow nodes in order
-                current_text = "Initial text from document"  # Default starting text
+                # Get workflow edges for DAG execution
+                edges = db.query(EdgeDB).filter(EdgeDB.workflow_id == job.workflow_id).all()
+                nodes = workflow.nodes
 
-                for i, node in enumerate(workflow.nodes):
-                    # Create job step record
-                    job_step = JobStepDB(
-                        job_id=job.id,
-                        node_id=node.id,
-                        node_type=node.node_type,
-                        status="Running",
-                        input_text=current_text,
-                        config_snapshot=node.config
-                    )
-                    db.add(job_step)
-                    db.commit()
-                    db.refresh(job_step)
-
-                    logger.info(f"Executing node {node.id} ({node.node_type}) for job {job_id}")
-
-                    try:
-                        # Execute node based on type
-                        if node.node_type == NodeType.EXTRACT_TEXT.value:
-                            current_text = await self._execute_extract_text_node(node.config, current_text, db)
-                        elif node.node_type == NodeType.GENERATIVE_AI.value:
-                            current_text = await self._execute_generative_ai_node(node.config, current_text)
-                        elif node.node_type == NodeType.FORMATTER.value:
-                            current_text = await self._execute_formatter_node(node.config, current_text)
-                        else:
-                            raise ValueError(f"Unknown node type: {node.node_type}")
-
-                        # Update job step as succeeded
-                        job_step.status = "Succeeded"
-                        job_step.finished_at = datetime.utcnow()
-                        job_step.output_text = current_text
-                        db.commit()
-
-                        logger.info(f"Node {node.id} completed successfully for job {job_id}")
-
-                    except Exception as e:
-                        # Handle node execution failure
-                        job_step.status = "Failed"
-                        job_step.finished_at = datetime.utcnow()
-                        job_step.error_message = str(e)
-                        db.commit()
-
-                        logger.error(f"Node {node.id} failed for job {job_id}: {str(e)}")
-                        raise
+                # If no edges, fall back to linear execution
+                if not edges:
+                    await self._execute_linear_workflow(job, nodes, db)
+                else:
+                    await self._execute_dag_workflow(job, nodes, edges, db)
 
                 # Mark job as succeeded
                 job.status = "Succeeded"
                 job.finished_at = datetime.utcnow()
-                job.final_output = current_text
+                # Get final output from the last executed nodes
+                final_outputs = []
+                for step in db.query(JobStepDB).filter(JobStepDB.job_id == job.id, JobStepDB.status == "Succeeded").all():
+                    if step.output_text:
+                        final_outputs.append(step.output_text)
+
+                job.final_output = "\n\n".join(final_outputs[-3:]) if final_outputs else "No output generated"
                 db.commit()
 
                 logger.info(f"Job {job_id} completed successfully")
@@ -208,6 +178,97 @@ class JobService:
                     asyncio.create_task(self.execute_job(db, next_job_id))
             except Exception as e:
                 logger.error(f"Error handling job completion: {str(e)}")
+
+    async def _execute_linear_workflow(self, job: JobDB, nodes: List[NodeDB], db: Session):
+        """Execute workflow nodes in linear order (fallback when no edges)"""
+        current_text = "Initial text from document"  # Default starting text
+
+        for i, node in enumerate(nodes):
+            current_text = await self._execute_single_node(job, node, current_text, db)
+
+    async def _execute_dag_workflow(self, job: JobDB, nodes: List[NodeDB], edges: List[EdgeDB], db: Session):
+        """Execute workflow using DAG topological scheduling with AND-join semantics"""
+        # Create node lookup
+        node_map = {node.id: node for node in nodes}
+        node_outputs = {}  # node_id -> output_text
+
+        # Use topological scheduling to get execution batches
+        for batch in topo_schedule(edges, nodes):
+            # Execute all nodes in this batch in parallel
+            batch_tasks = []
+            for node_id in batch:
+                node = node_map[node_id]
+
+                # Get dependencies and aggregate inputs
+                dependencies = get_node_dependencies(node_id, edges)
+                input_text = aggregate_inputs(dependencies, node_outputs)
+
+                # If no dependencies, use default starting text
+                if not input_text and not dependencies:
+                    input_text = "Initial text from document"
+
+                # Create task for parallel execution
+                task = self._execute_single_node(job, node, input_text, db)
+                batch_tasks.append((node_id, task))
+
+            # Execute batch in parallel and collect outputs
+            for node_id, task in batch_tasks:
+                try:
+                    output = await task
+                    node_outputs[node_id] = output
+                    logger.info(f"Node {node_id} in batch completed successfully")
+                except Exception as e:
+                    logger.error(f"Node {node_id} in batch failed: {str(e)}")
+                    raise
+
+    async def _execute_single_node(self, job: JobDB, node: NodeDB, input_text: str, db: Session) -> str:
+        """Execute a single node and return its output"""
+        # Create job step record
+        job_step = JobStepDB(
+            job_id=job.id,
+            node_id=node.id,
+            node_type=node.node_type,
+            status="Running",
+            input_text=input_text,
+            config_snapshot=node.config
+        )
+        db.add(job_step)
+        db.commit()
+        db.refresh(job_step)
+
+        logger.info(f"Executing node {node.id} ({node.node_type}) for job {job.id}")
+
+        try:
+            # Execute node based on type
+            if node.node_type == NodeType.EXTRACT_TEXT.value:
+                output = await self._execute_extract_text_node(node.config, input_text, db)
+            elif node.node_type == NodeType.GENERATIVE_AI.value:
+                output = await self._execute_generative_ai_node(node.config, input_text)
+            elif node.node_type == NodeType.FORMATTER.value:
+                output = await self._execute_formatter_node(node.config, input_text)
+            elif node.node_type == NodeType.AGENT.value:
+                output = await self._execute_agent_node(node.config, input_text)
+            else:
+                raise ValueError(f"Unknown node type: {node.node_type}")
+
+            # Update job step as succeeded
+            job_step.status = "Succeeded"
+            job_step.finished_at = datetime.utcnow()
+            job_step.output_text = output
+            db.commit()
+
+            logger.info(f"Node {node.id} completed successfully for job {job.id}")
+            return output
+
+        except Exception as e:
+            # Handle node execution failure
+            job_step.status = "Failed"
+            job_step.finished_at = datetime.utcnow()
+            job_step.error_message = str(e)
+            db.commit()
+
+            logger.error(f"Node {node.id} failed for job {job.id}: {str(e)}")
+            raise
 
     async def _execute_extract_text_node(self, config: Dict, input_text: str, db: Session = None) -> str:
         """Execute extract_text node"""
@@ -251,6 +312,84 @@ class JobService:
         except Exception as e:
             logger.error(f"Error in formatter node: {str(e)}")
             raise
+
+    async def _execute_agent_node(self, config: Dict, input_text: str) -> str:
+        """Execute agent node with bounded execution"""
+        try:
+            # Structured logging for agent execution start
+            logger.info(
+                "Agent node execution started",
+                extra={
+                    "node_type": "agent",
+                    "objective": config.get('objective', 'unknown'),
+                    "tools": config.get('tools', []),
+                    "max_iterations": config.get('max_iterations', 5),
+                    "timeout_seconds": config.get('timeout_seconds', 30),
+                    "input_length": len(input_text)
+                }
+            )
+
+            result = await execute_agent_bounded(config, input_text)
+
+            # Redact PII from output for logging
+            output_text = result.get('output_text', input_text)
+            redacted_output = self._redact_sensitive_data(output_text)
+
+            # Structured logging for agent execution completion
+            logger.info(
+                "Agent node execution completed",
+                extra={
+                    "node_type": "agent",
+                    "termination_reason": result.get('termination_reason', 'unknown'),
+                    "iterations": result.get('iterations', 0),
+                    "execution_time": result.get('execution_time', 0),
+                    "output_length": len(output_text),
+                    "redacted_output_preview": redacted_output[:100] if redacted_output else None
+                }
+            )
+
+            return output_text
+
+        except Exception as e:
+            # Structured error logging
+            logger.error(
+                "Agent node execution failed",
+                extra={
+                    "node_type": "agent",
+                    "error_type": type(e).__name__,
+                    "error_message": str(e),
+                    "objective": config.get('objective', 'unknown')
+                }
+            )
+            raise
+
+    def _redact_sensitive_data(self, text: str) -> str:
+        """Redact sensitive information from text for logging"""
+        import re
+
+        if not text:
+            return text
+
+        # Redact common PII patterns
+        redacted = text
+
+        # Email addresses
+        redacted = re.sub(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', '[EMAIL_REDACTED]', redacted)
+
+        # Phone numbers (basic patterns)
+        redacted = re.sub(r'\b\d{3}-\d{3}-\d{4}\b', '[PHONE_REDACTED]', redacted)
+        redacted = re.sub(r'\b\(\d{3}\)\s*\d{3}-\d{4}\b', '[PHONE_REDACTED]', redacted)
+
+        # Credit card numbers (basic 16-digit pattern)
+        redacted = re.sub(r'\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b', '[CARD_REDACTED]', redacted)
+
+        # Social Security Numbers
+        redacted = re.sub(r'\b\d{3}-\d{2}-\d{4}\b', '[SSN_REDACTED]', redacted)
+
+        # API keys and tokens (common patterns)
+        redacted = re.sub(r'\b[A-Za-z0-9]{32,}\b', '[TOKEN_REDACTED]', redacted)
+
+        return redacted
 
 
 # Global service instance
