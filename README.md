@@ -75,6 +75,53 @@ curl -s http://localhost:8000/workflows/{wf_id}/run
 - POST `/workflows/{id}/nodes` → `{ message, node_id }`
 - POST `/workflows/{id}/run` → `{ final_output }`
 
+## Minimal Endpoints (Per Constitution)
+These describe the minimal target API as defined by the constitution (asynchronous runs, file uploads). They may extend beyond the current in-memory demo.
+
+- POST `/workflows` → `{ id, name }`
+- GET `/workflows/{id}` → `{ id, name, nodes: Node[] }`
+- POST `/workflows/{id}/nodes` → `{ message, node_id }`
+- POST `/files` (multipart/form-data; file: pdf) → `{ file_id }`
+- POST `/workflows/{id}/run` → `{ job_id }`
+- GET `/jobs/{job_id}` → `{ status: "Pending"|"Running"|"Succeeded"|"Failed", result?: { final_output: string }, error?: string }`
+
+Notes:
+- PDF only, size-limited (e.g., 10MB), MIME validated.
+- CORS enabled for local dev (`http://localhost:3000`).
+- Secrets (e.g., LLM_API_KEY) are provided via environment variables.
+
+## Minimal Data Model (Per Constitution)
+SQLite (single-file) schema sufficient for persistence and async execution tracking:
+
+- workflows
+  - `id` (TEXT PK)
+  - `name` (TEXT)
+  - `created_at` (DATETIME)
+
+- nodes
+  - `id` (TEXT PK)
+  - `workflow_id` (TEXT FK → workflows.id)
+  - `node_type` (TEXT: `extract_text` | `generative_ai` | `formatter`)
+  - `config_json` (TEXT)
+  - `order_index` (INTEGER)
+
+- files
+  - `id` (TEXT PK)
+  - `filename` (TEXT)
+  - `mime_type` (TEXT)
+  - `size_bytes` (INTEGER)
+  - `path` (TEXT)
+  - `created_at` (DATETIME)
+
+- jobs
+  - `id` (TEXT PK)
+  - `workflow_id` (TEXT FK → workflows.id)
+  - `status` (TEXT: `Pending` | `Running` | `Succeeded` | `Failed`)
+  - `result_json` (TEXT, NULLABLE)
+  - `error` (TEXT, NULLABLE)
+  - `started_at` (DATETIME)
+  - `finished_at` (DATETIME, NULLABLE)
+
 ## CORS & Ports
 - Backend allows origin: `http://localhost:3000`
 - If ports are busy, update the port and CORS origin accordingly
