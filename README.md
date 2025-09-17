@@ -145,6 +145,10 @@ PYTHONPATH=. DATABASE_URL=postgresql://postgres:password@localhost:5432/workflow
 - **POST** `/workflows/{id}/nodes` → `{ message, node_id }`
 - **GET** `/workflows/{id}/runs` → `{ runs: [Job] }`
 
+### DAG Workflow Endpoints (NEW)
+- **POST** `/workflows/{id}/edges` → `{ message, edge_id }` *(connect nodes with cycle detection)*
+- **GET** `/workflows/{id}/edges` → `{ edges: [Edge] }` *(list all edges)*
+
 ### Async Execution (NEW)
 - **POST** `/workflows/{id}/run` → `{ job_id, message }` *(async execution)*
 - **GET** `/jobs/{job_id}` → `{ id, workflow_id, status, started_at, finished_at?, final_output?, error_message? }`
@@ -161,10 +165,51 @@ PYTHONPATH=. DATABASE_URL=postgresql://postgres:password@localhost:5432/workflow
 3. **formatter**: Apply text transformation rules
    - Config: `{ rules: string[] }`
    - Available rules: `lowercase`, `uppercase`, `full_to_half`, `half_to_full`
+4. **agent** (NEW): AI Agent with bounded execution and tool access
+   - Config: `{ objective: string, tools: string[], budgets: object, max_concurrent?: number, timeout_seconds?: number, max_retries?: number, max_iterations?: number, formatting_rules?: string[] }`
+   - Available tools: `llm_call`, `formatter`
+   - Budgets: `{ execution_time: number }` (seconds)
+   - Policy limits: max_concurrent ≤ 10, timeout_seconds ≤ 30, max_retries ≤ 3
 
 ### Job Status Flow
 ```
 Pending → Running → Succeeded/Failed
+```
+
+## DAG Workflows (NEW)
+
+### Features
+- **Directed Acyclic Graph (DAG)**: Connect nodes with edges to create complex workflows
+- **Cycle Detection**: Automatic validation prevents circular dependencies
+- **Topological Scheduling**: Nodes execute in dependency order with maximum parallelism
+- **AND-join Semantics**: Downstream nodes wait for ALL upstream dependencies to complete
+- **Parallel Execution**: Independent nodes run concurrently within batches
+
+### Edge Configuration
+```json
+{
+  "from_node_id": "node-1",
+  "to_node_id": "node-2",
+  "from_port": "output",
+  "to_port": "input",
+  "condition": null
+}
+```
+
+### Execution Model
+1. **Validation**: Cycle detection ensures DAG property
+2. **Scheduling**: Topological sort creates execution batches
+3. **Parallel Execution**: Nodes within each batch run concurrently
+4. **Input Aggregation**: Multi-input nodes receive concatenated upstream outputs
+5. **Deterministic Order**: Alphabetical sorting ensures reproducible results
+
+### Example: Diamond Pattern
+```
+    A (start)
+   / \
+  B   C (parallel)
+   \ /
+    D (waits for both B and C)
 ```
 
 ### Concurrency Limits
