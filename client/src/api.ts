@@ -9,7 +9,10 @@ import {
   FileUploadResponse,
   RunsResponse,
   AddNodeRequest,
-  AddNodeResponse
+  AddNodeResponse,
+  AddEdgeRequest,
+  AddEdgeResponse,
+  WorkflowEdgesResponse
 } from './types';
 
 const API_BASE = (typeof import.meta !== 'undefined' && (import.meta as any).env && (import.meta as any).env.VITE_API_BASE)
@@ -80,6 +83,17 @@ export async function pollJobUntilComplete(jobId: string, maxPolls: number = 30,
   }
 
   throw new Error(`Job ${jobId} did not complete within ${maxPolls} polls`);
+}
+
+// Edge API functions for DAG workflows
+export async function addEdge(wfId: string, req: AddEdgeRequest): Promise<AddEdgeResponse> {
+  const res = await axios.post(`${API_BASE}/workflows/${wfId}/edges`, req);
+  return res.data;
+}
+
+export async function getEdges(wfId: string): Promise<WorkflowEdgesResponse> {
+  const res = await axios.get(`${API_BASE}/workflows/${wfId}/edges`);
+  return res.data;
 }
 
 

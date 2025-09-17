@@ -56,6 +56,13 @@ class FormatterService:
             logger.error(f"Error validating formatter config: {str(e)}")
             return False, f"Error validating configuration: {str(e)}"
 
+    def apply_rule(self, text: str, rule: str) -> str:
+        """
+        Apply a single formatting rule to text
+        Returns: formatted text
+        """
+        return self.apply_rules(text, [rule])
+
     def apply_rules(self, text: str, rules: List[str]) -> str:
         """
         Apply formatting rules to text in order

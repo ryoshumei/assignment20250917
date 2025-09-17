@@ -41,6 +41,8 @@ class LLMService:
 
             # Validate prompt contains placeholder
             prompt = config["prompt"]
+            logger.info(f"LLM validation - received prompt: '{prompt}'")
+            logger.info(f"LLM validation - prompt contains {{text}}: {'{text}' in prompt}")
             if "{text}" not in prompt:
                 return False, "Prompt must contain '{text}' placeholder for input text"
 

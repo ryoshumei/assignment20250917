@@ -9,8 +9,8 @@ import time
 import os
 
 from .database import get_db
-from .db_models import WorkflowDB, NodeDB, RunDB, RunNodeDB, JobDB, JobStepDB, UploadedFileDB
-from .models import NodeType
+from .db_models import WorkflowDB, NodeDB, RunDB, RunNodeDB, JobDB, JobStepDB, UploadedFileDB, EdgeDB
+from .models import NodeType, Edge
 from .schemas import (
     CreateWorkflowRequest,
     CreateWorkflowResponse,
@@ -25,11 +25,16 @@ from .schemas import (
     JobDetailResponse,
     JobStepResponse,
     FileUploadResponse,
+    AddEdgeRequest,
+    EdgeResponse,
+    WorkflowEdgesResponse,
 )
 from .services.pdf_service import pdf_service
 from .services.llm_service import llm_service
 from .services.formatter_service import formatter_service
 from .services.job_service import job_service
+from .services.agent_service import validate_config as validate_agent_config
+from .services.graph_service import validate_edges_no_cycles
 
 
 # Configure structured logging
@@ -136,6 +141,10 @@ def add_node(wf_id: str, req: AddNodeRequest, db: Session = Depends(get_db)):
         is_valid, error_msg = formatter_service.validate_config(req.config)
         if not is_valid:
             raise HTTPException(status_code=400, detail=error_msg)
+    elif req.node_type == NodeType.AGENT:
+        is_valid, error_msg = validate_agent_config(req.config)
+        if not is_valid:
+            raise HTTPException(status_code=400, detail=error_msg)
 
     # Get the next order index
     max_order = db.query(NodeDB).filter(NodeDB.workflow_id == wf_id).count()
@@ -151,6 +160,56 @@ def add_node(wf_id: str, req: AddNodeRequest, db: Session = Depends(get_db)):
     db.refresh(node)
 
     return {"message": "Node added", "node_id": node.id}
+
+
+@app.post("/workflows/{wf_id}/edges")
+def add_edge(wf_id: str, req: AddEdgeRequest, db: Session = Depends(get_db)):
+    """Add an edge to a workflow with DAG validation"""
+    workflow = db.query(WorkflowDB).filter(WorkflowDB.id == wf_id).first()
+    if not workflow:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+
+    # Get all nodes and existing edges for validation
+    nodes = db.query(NodeDB).filter(NodeDB.workflow_id == wf_id).all()
+    existing_edges = db.query(EdgeDB).filter(EdgeDB.workflow_id == wf_id).all()
+
+    # Create new edge object for validation
+    new_edge = EdgeDB(
+        workflow_id=wf_id,
+        from_node_id=req.from_node_id,
+        from_port=req.from_port,
+        to_node_id=req.to_node_id,
+        to_port=req.to_port,
+        condition=req.condition
+    )
+
+    # Validate that the new edge doesn't create cycles
+    try:
+        all_edges = existing_edges + [new_edge]
+        validate_edges_no_cycles(wf_id, all_edges, nodes)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # If validation passes, save the edge
+    db.add(new_edge)
+    db.commit()
+    db.refresh(new_edge)
+
+    return {"message": "Edge added", "edge_id": new_edge.id}
+
+
+@app.get("/workflows/{wf_id}/edges", response_model=WorkflowEdgesResponse)
+def get_workflow_edges(wf_id: str, db: Session = Depends(get_db)):
+    """Get all edges for a workflow"""
+    workflow = db.query(WorkflowDB).filter(WorkflowDB.id == wf_id).first()
+    if not workflow:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+
+    edges = db.query(EdgeDB).filter(EdgeDB.workflow_id == wf_id).all()
+
+    return WorkflowEdgesResponse(
+        edges=[EdgeResponse.from_orm(edge) for edge in edges]
+    )
 
 
 @app.post("/workflows/{wf_id}/run", response_model=JobAccepted)

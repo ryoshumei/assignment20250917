@@ -1,0 +1,237 @@
+openapi: 3.0.3
+info:
+  title: Workflow App – DAG & Agent Extensions
+  version: 0.1.0
+servers:
+  - url: http://localhost:8000
+paths:
+  /workflows:
+    post:
+      summary: Create workflow
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+              required: [name]
+      responses:
+        '200':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  name: { type: string }
+  /workflows/{id}:
+    get:
+      summary: Get workflow detail
+      parameters:
+        - in: path
+          name: id
+          schema: { type: string }
+          required: true
+      responses:
+        '200':
+          description: Workflow
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  name: { type: string }
+                  nodes:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        node_type: { type: string }
+                        config: { type: object }
+  /workflows/{id}/nodes:
+    post:
+      summary: Add node to workflow
+      parameters:
+        - in: path
+          name: id
+          schema: { type: string }
+          required: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                node_type:
+                  type: string
+                  enum: [extract_text, generative_ai, formatter, agent]
+                config:
+                  type: object
+              required: [node_type, config]
+      responses:
+        '200':
+          description: Added
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  node_id: { type: string }
+  /workflows/{id}/edges:
+    post:
+      summary: Add edge to workflow with cycle detection
+      parameters:
+        - in: path
+          name: id
+          schema: { type: string }
+          required: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                from_node_id:
+                  type: string
+                  description: Source node ID
+                from_port:
+                  type: string
+                  default: "output"
+                  description: Source port name
+                to_node_id:
+                  type: string
+                  description: Target node ID
+                to_port:
+                  type: string
+                  default: "input"
+                  description: Target port name
+                condition:
+                  type: string
+                  nullable: true
+                  description: Optional condition for edge activation
+              required: [from_node_id, to_node_id]
+      responses:
+        '200':
+          description: Edge added successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  edge_id: { type: string }
+        '400':
+          description: Invalid edge (cycle detected or invalid node references)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  detail: { type: string }
+        '404':
+          description: Workflow not found
+    get:
+      summary: Get all edges for workflow
+      parameters:
+        - in: path
+          name: id
+          schema: { type: string }
+          required: true
+      responses:
+        '200':
+          description: List of edges
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  edges:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        workflow_id: { type: string }
+                        from_node_id: { type: string }
+                        from_port: { type: string }
+                        to_node_id: { type: string }
+                        to_port: { type: string }
+                        condition: { type: string, nullable: true }
+        '404':
+          description: Workflow not found
+  /workflows/{id}/run:
+    post:
+      summary: Start async workflow run
+      parameters:
+        - in: path
+          name: id
+          schema: { type: string }
+          required: true
+      responses:
+        '200':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  job_id: { type: string }
+                  message: { type: string }
+  /jobs/{job_id}:
+    get:
+      summary: Get job status
+      parameters:
+        - in: path
+          name: job_id
+          schema: { type: string }
+          required: true
+      responses:
+        '200':
+          description: Job
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  workflow_id: { type: string }
+                  status: { type: string }
+                  started_at: { type: string, format: date-time }
+                  finished_at: { type: string, format: date-time }
+                  error_message: { type: string }
+                  final_output: { type: string }
+  /files:
+    post:
+      summary: Upload PDF file
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Uploaded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  file_id: { type: string }
+                  filename: { type: string }
+                  size: { type: integer }
+
+

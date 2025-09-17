@@ -118,4 +118,30 @@ class FileUploadResponse(BaseModel):
     size: int
 
 
+# Edge schemas for DAG workflows
+class AddEdgeRequest(BaseModel):
+    from_node_id: str
+    from_port: str = "output"
+    to_node_id: str
+    to_port: str = "input"
+    condition: Optional[str] = None
+
+
+class EdgeResponse(BaseModel):
+    id: str
+    workflow_id: str
+    from_node_id: str
+    from_port: str
+    to_node_id: str
+    to_port: str
+    condition: Optional[str] = None
+
+    class Config:
+        orm_mode = True
+
+
+class WorkflowEdgesResponse(BaseModel):
+    edges: List[EdgeResponse]
+
+
 

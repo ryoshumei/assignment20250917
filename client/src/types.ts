@@ -10,7 +10,7 @@ export interface Node {
   config: Record<string, unknown>;
 }
 
-export type NodeType = "extract_text" | "generative_ai" | "formatter";
+export type NodeType = "extract_text" | "generative_ai" | "formatter" | "agent";
 
 export interface CreateWorkflowRequest {
   name: string;
@@ -68,6 +68,45 @@ export interface FormatterConfig {
   rules: string[];
 }
 
+export interface AgentConfig {
+  objective: string;
+  tools: string[];
+  budgets: Record<string, unknown>;
+  max_concurrent?: number;
+  timeout_seconds?: number;
+  max_retries?: number;
+  max_iterations?: number;
+  formatting_rules?: string[];
+}
+
+// Edge Types for DAG workflows
+export interface Edge {
+  id: string;
+  workflow_id: string;
+  from_node_id: string;
+  from_port: string;
+  to_node_id: string;
+  to_port: string;
+  condition?: string;
+}
+
+export interface AddEdgeRequest {
+  from_node_id: string;
+  from_port?: string;
+  to_node_id: string;
+  to_port?: string;
+  condition?: string;
+}
+
+export interface AddEdgeResponse {
+  edge_id: string;
+  message: string;
+}
+
+export interface WorkflowEdgesResponse {
+  edges: Edge[];
+}
+
 // API Response Types
 export interface RunsResponse {
   runs: Job[];
@@ -75,7 +114,7 @@ export interface RunsResponse {
 
 export interface AddNodeRequest {
   node_type: NodeType;
-  config: ExtractTextConfig | GenerativeAIConfig | FormatterConfig;
+  config: ExtractTextConfig | GenerativeAIConfig | FormatterConfig | AgentConfig;
 }
 
 export interface AddNodeResponse {
