@@ -1,0 +1,60 @@
+{
+  "feature_name": "Workflow Builder sample app for assignment",
+  "summary": "A minimal workflow builder demo with FastAPI backend and Vite+React+TS frontend. Users can create workflows, add nodes of types extract_text / generative_ai / formatter, run the workflow, and see the simulated final output.",
+  "background": "This implements the assignment requirements from assignment_files, turning the provided code.md into a runnable project with backend endpoints and a simple frontend for interaction.",
+  "goals": [
+    "Create in-memory workflow CRUD with nodes",
+    "Support node types: extract_text, generative_ai, formatter",
+    "Provide run endpoint to simulate node execution",
+    "Provide minimal React UI to create workflows, add nodes, run, and view output",
+    "Use ports: backend 8000, frontend 3000"
+  ],
+  "non_goals": [
+    "No persistent database",
+    "No real LLM integration (simulation only)",
+    "No authentication/authorization",
+    "No production-grade error handling or logging"
+  ],
+  "personas": [
+    "Assessor: verifies assignment functionality end-to-end",
+    "Developer: runs and iterates locally"
+  ],
+  "user_stories": [
+    "As a user, I can create a workflow by name and get its id.",
+    "As a user, I can fetch a workflow and see its nodes.",
+    "As a user, I can add a node of a specific type with config.",
+    "As a user, I can run the workflow to see the simulated output."
+  ],
+  "acceptance_criteria": [
+    "POST /workflows returns id and name",
+    "GET /workflows/{id} returns name and a list of nodes",
+    "POST /workflows/{id}/nodes appends a node and returns node_id",
+    "POST /workflows/{id}/run returns final_output string",
+    "Frontend UI can create/fetch workflow, add each node type, and run"
+  ],
+  "constraints": [
+    "FastAPI==0.95.0, Uvicorn==0.22.0, Pydantic==1.10.5",
+    "React 18, Vite 4, TypeScript",
+    "Allow CORS from http://localhost:3000",
+    "In-memory storage only"
+  ],
+  "entities": [
+    "Workflow: id, name, nodes[]",
+    "Node: id, node_type, config"
+  ],
+  "risks": [
+    "CORS misconfiguration blocks browser calls",
+    "Version mismatches for tooling cause install issues"
+  ],
+  "metrics": [
+    "All acceptance scenarios pass locally",
+    "Manual UI flow completes in < 2 minutes from clean setup"
+  ],
+  "assumptions": [
+    "Local dev environment has Python and Node tooling installed",
+    "Ports 8000 and 3000 are free"
+  ],
+  "open_questions": [
+    "None for this assignment; scope is intentionally minimal"
+  ]
+}

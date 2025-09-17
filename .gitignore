@@ -1,4 +1,16 @@
-/assignment_files/
+# Node
+client/node_modules/
+client/dist/
 
-# IDE directories
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# IDE/OS
 .idea/
+.vscode/
+.DS_Store
+
+# Project-specific
+.serena/
