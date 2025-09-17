@@ -16,4 +16,5 @@ __pycache__/
 .serena/
 assignment_files/
 /.env
-/uploads/
+/uploads/*
+!/uploads/.gitkeep
